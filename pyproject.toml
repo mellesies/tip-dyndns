@@ -10,5 +10,10 @@ dependencies = [
     "rich",
     "ipython",
     "pyfiglet",
-    "transip",
+    "python-transip",
+    "munch",
+    "python-benedict",
+    "pyyaml",
+    "appdirs",
+    "bs4",
 ]
