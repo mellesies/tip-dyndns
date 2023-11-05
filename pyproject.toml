@@ -3,6 +3,12 @@ requires = ["setuptools>=42"]
 build-backend = "setuptools.build_meta"
 
 [project]
+name = "tipdyndns"
+version = "0.0.1"
 dependencies = [
     "click",
+    "rich",
+    "ipython",
+    "pyfiglet",
+    "transip",
 ]
