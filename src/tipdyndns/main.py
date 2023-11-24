@@ -1,14 +1,90 @@
 """Main functionality."""
+from typing import List
 import os
 import logging
+from requests import get
+from datetime import datetime
+
+import duckdb
 from transip import TransIP
 
 from . import util
-from .hg659client import HG659Client
-
-IP_HISTORY_FILENAME = 'ip_history.yaml'
 
 log = logging.getLogger('tipdyndns')
+
+
+class Database(object):
+
+    def __init__(self, cfg, reset=False):
+        filename = os.path.join(cfg.data_dir, cfg.settings.database)
+        conn = duckdb.connect(filename)
+
+        try:
+            conn.sql("CREATE TABLE ip_history (id INTEGER, ip VARCHAR, assigned_dt DATETIME)")
+            conn.sql("CREATE SEQUENCE seq_ip_history_id START 1;")
+        except duckdb.CatalogException:
+            pass
+
+        if reset:
+            conn.sql("DELETE FROM ip_history")
+
+        self.conn = conn
+
+    def get_entries(self):
+        return self.conn.sql("select * from ip_history").fetchall()
+
+    def get_latest_entry(self):
+
+        return self.conn.sql("""
+            select
+                ip,
+                assigned_dt
+            from
+                ip_history
+            inner join (
+                select
+                    max(assigned_dt) as timestamp
+                from
+                    ip_history
+            ) as newest
+            on ip_history.assigned_dt == newest.timestamp
+        """).fetchone()
+
+    def add_entry(self, ip_address, assigned_at=None):
+        if assigned_at is None:
+            assigned_at = datetime.now()
+
+        self.conn.sql(f"""
+            insert into ip_history values(
+                nextval('seq_ip_history_id'),
+                '{ip_address}',
+                '{assigned_at}',
+            )
+        """)
+
+
+def create_or_update_host_record(transip_client, host, current_ip, expire):
+    """Create or update a host record at TransIP."""
+
+    # First get the currenct record.
+    log.info(f"Checking '{host}'")
+    hostname, domain = host.split('.', 1)
+    dns_entry = get_dns_entry_by_name(transip_client, domain, hostname)
+
+    if dns_entry is None:
+        log.info("Creating new DNS entry!")
+        create_dns_entry(
+            transip_client,
+            domain,
+            hostname,
+            expire,
+            'A',
+            current_ip,
+        )
+
+    else:
+        log.info("Updating DNS entry!")
+        update_dns_entry(transip_client, domain, dns_entry, current_ip)
 
 def run(cfg, reset):
     """Check the current (external) IP address and update the DNS server"""
@@ -18,17 +94,14 @@ def run(cfg, reset):
     log.debug(f"Current IP: '{current_ip}'")
 
     # Get the IP history
-    ip_hist_file = os.path.join(cfg.data_dir, IP_HISTORY_FILENAME)
-
-    if reset:
-        ip_history = []
-    else:
-        ip_history = util.load_yaml(ip_hist_file)
+    db = Database(cfg, reset)
 
     # Get the last known IP from config
-    if ip_history:
-        last_ip = ip_history[-1]
-    else:
+    latest_entry = db.get_latest_entry()
+
+    try:
+        last_ip = latest_entry[0]
+    except:
         last_ip = ''
 
     log.debug(f"Last known IP: '{last_ip}'")
@@ -49,7 +122,7 @@ def run(cfg, reset):
                 # Create new entry
                 log.info("Creating new DNS entry!")
 
-                add_dns_entry(
+                create_dns_entry(
                     client,
                     domain,
                     name,
@@ -65,19 +138,13 @@ def run(cfg, reset):
         log.debug("Updating IP History")
 
         # Add the new IP to history
-        ip_history.append(current_ip)
-
-        # Store the updated IP
-        # util.save_yaml(ip_history, ip_hist_file)
+        db.add_entry(current_ip)
 
 
 
 def get_current_ip(cfg) -> str:
     """Return the current (external) IP address."""
-    m = cfg.settings.modem
-    client = HG659Client(m.host, m.username, m.password)
-
-    return client.get_current_ip()
+    return get('https://api.ipify.org').text
 
 def get_transip_client(cfg) -> TransIP:
     """Create a TransIP Client."""
@@ -101,9 +168,8 @@ def list_dns_entries_for_domain(client, domain):
     for record in records:
         print(f"DNS: {record.name} {record.expire} {record.type} {record.content}")
 
-
-def add_dns_entry(
-    client: HG659Client, domain: str, name: str, exp: int,
+def create_dns_entry(
+    client: TransIP, domain: str, name: str, exp: int,
     type_: str, content: str
 ):
     d = client.domains.get(domain)
@@ -123,8 +189,7 @@ def update_dns_entry(client, domain, entry, content):
         'content': content,
     })
 
-
-def get_dns_entry_by_name(client: HG659Client, domain: str, name: str):
+def get_dns_entry_by_name(client: TransIP, domain: str, name: str):
     # Retrieve a domain by its name.
     d = client.domains.get(domain)
 
@@ -133,5 +198,5 @@ def get_dns_entry_by_name(client: HG659Client, domain: str, name: str):
 
     # Show the DNS record information on the screen.
     for record in records:
-        if record.name == name:
+        if record.name == name  and record.type == 'A':
             return record

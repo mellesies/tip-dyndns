@@ -82,21 +82,13 @@ def run(ctx, reset):
 
 
 @cli.command()
+@click.option('-d', '--domain', default='zakbroek.com')
 @click.pass_context
-def check(ctx):
+def check(ctx, domain):
     cfg = ctx.obj['cfg']
     client = main.get_transip_client(cfg)
 
-    # Retrieve a domain by its name.
-    domain = client.domains.get('zakbroek.com')
-
-    # Retrieve the DNS records of a single domain.
-    records = domain.dns.list()
-
-    # Show the DNS record information on the screen.
-    for record in records:
-        print(f"DNS: {record.name} {record.expire} {record.type} {record.content}")
-
+    main.list_dns_entries_for_domain(client, domain)
 
 # ------------------------------------------------------------------------------
 # shell
@@ -114,6 +106,7 @@ def shell(ctx, online):
         'main': main,
         'cfg': cfg,
         'tip': main.get_transip_client(cfg),
+        'db': main.Database(cfg),
     }
 
 
