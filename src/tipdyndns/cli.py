@@ -90,6 +90,17 @@ def check(ctx, domain):
 
     main.list_dns_entries_for_domain(client, domain)
 
+
+@cli.command()
+@click.pass_context
+def show_history(ctx):
+    cfg = ctx.obj['cfg']
+
+    db = main.Database(cfg)
+
+    hx = db.conn.sql("select * from ip_history")
+    print(hx)
+
 # ------------------------------------------------------------------------------
 # shell
 # ------------------------------------------------------------------------------
